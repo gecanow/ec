@@ -64,6 +64,7 @@ def checkAndLoadAllLanguageDatasets(top_level_data_dir, task_dataset_tag, args):
         return []
     else:
         full_language_dir = os.path.join(top_level_data_dir, LANGUAGE_SUBDIR, task_dataset_tag, languageDatasetSubdir)
+        print(full_language_dir)
         for split in SPLITS:
             full_language_split_dir = os.path.join(full_language_dir, split)
             for language_file in LANGUAGE_JSON_FILES:
