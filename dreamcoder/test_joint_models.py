@@ -3,7 +3,7 @@ test_joint_models: Author : Catherine Wong
 
 Tests joint model implementations. For now, a scratch interface for development.
 """
-# https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
+# Support for https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
 from __future__ import unicode_literals, print_function, division
 from io import open
 import unicodedata
@@ -25,19 +25,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -----------------------------------------------------------------------------
 import sys
 
-def test_joint_language_program_model(result, train_tasks, testing_tasks):
-    # ------------------- FLAGS -------------------
-    USE_ATTENTION = True 
-    USE_BERT = True 
-    # ------------------- FLAGS -------------------
+# ------------------- FLAGS -------------------
+USE_ATTENTION = True  # TODO: verify 
+USE_BERT = False      # TODO: implement
+OUTPUT_PROGs = False  # else output language
 
-    # All tasks have a ground truth program and a name.
-    
-    print(f'Length train tasks: {len(train_tasks)}')
-    print(f'Length test tasks: {len(testing_tasks)}')
+bert_tokenizer = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', 'bert-base-uncased') # https://pytorch.org/hub/huggingface_pytorch-transformers/
+# ------------------- FLAGS -------------------
 
+# Helper function; parses a list of tasks into a list of pure (input, output) sentence pairs
+def parse_tasks_into_pairs(result, tasks):
     pairs = []
-    for task in train_tasks:
+    for task in tasks:
         task_name = task.name
         task_language = result.taskLanguage[task_name]
         groundTruthProgram = task.groundTruthProgram 
@@ -49,15 +48,17 @@ def test_joint_language_program_model(result, train_tasks, testing_tasks):
         # print()
         # Additional attributes on LOGO tasks: see makeLogoTasks.py
         # task.highresolution <== an array containing the image.
-
         for task_lang in task_language:
-            pairs.append([task_lang, ' '.join(ground_truth_program_tokens)])
-    
-    # Data Prep
-    # https://pytorch.org/hub/huggingface_pytorch-transformers/
-    bert_tokenizer = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', 'bert-base-uncased')    # Download vocabulary from S3 and cache.
+            # pairs must be of the form [(input sentence, output sentence)]
+            if OUTPUT_PROGs:
+                pairs.append([task_lang, ' '.join(ground_truth_program_tokens)])
+            else:
+                pairs.append([' '.join(ground_truth_program_tokens), task_lang])
 
-    def prepare_data(prog_lang_pairs):
+    return pairs 
+
+# Helper function; parses a list of in/out sentence pairs into two language objects
+def prepare_data(in_out_pairs):
         prog_lang, nl_lang = None, None 
 
         if USE_BERT:
@@ -66,22 +67,34 @@ def test_joint_language_program_model(result, train_tasks, testing_tasks):
         else:
             print("using baseline tokenizer")
             prog_lang, nl_lang = Lang("prog"), Lang("lang")
-
-        reversed_pairs = []
-
-        for pair in prog_lang_pairs:
-            prog_lang.addSentence(pair[0])
-            nl_lang.addSentence(pair[1])
-            reversed_pairs.append([pair[1], pair[0]])
+        
+        for pair in in_out_pairs:
+            if OUTPUT_PROGs:
+                nl_lang.addSentence(pair[0])
+                prog_lang.addSentence(pair[1])
+            else:
+                prog_lang.addSentence(pair[0])
+                nl_lang.addSentence(pair[1])
         
         print(f"Data Prepared | Found\n{prog_lang.name, prog_lang.n_words}\n{nl_lang.name, nl_lang.n_words}")
-        return nl_lang, prog_lang, reversed_pairs
+        if OUTPUT_PROGs:
+            return nl_lang, prog_lang
+        else:
+            return prog_lang, nl_lang
 
-    input_lang, output_lang, pairs = prepare_data(pairs) # nl_lang, prog_lang, nl_prog_pairs
-    # note: pairs must be of the form [(input sentence, output sentence)]
+
+# !!! MAIN ENTRY !!!
+# On command line: python3 bin/logo.py --enumerationTimeout 1 --testingTimeout 1 --iterations 12 --biasOptimal --contextual --taskBatchSize 40 --testEvery 1 --no-cuda --recognitionTimeout 1800 --recognition_0 --recognition_1 examples language --Helmholtz 0.5 --synchronous_grammar --skip_first_test --taskDataset logo_unlimited_200 --language_encoder recurrent --languageDataset logo_unlimited_200/human --sample_n_supervised 0 --moses_dir ./moses_compiled --smt_phrase_length 1 --language_compression --lc_score 0.2 --max_compression 5 --smt_pseudoalignments 0.0 --max_mem_per_enumeration_thread 5000000000 --seed 1 --test_joint_language_program_model       
+def test_joint_language_program_model(result, train_tasks, testing_tasks):
+    # All tasks have a ground truth program and a name
+    print(f'Length train tasks: {len(train_tasks)}')
+    print(f'Length test tasks: {len(testing_tasks)}')
+    pairs = parse_tasks_into_pairs(result, train_tasks)
+    
+    # Data Prep
+    input_lang, output_lang = prepare_data(pairs)
     MAX_LENGTH = max(input_lang.max_sentence_length, output_lang.max_sentence_length) + 1
-    print(f'max length found: {MAX_LENGTH}')
-    print("data prep: done")
+    print(f'max length found: {MAX_LENGTH}\nData Prep: Done')
 
     # Training
     hidden_size = 256
@@ -90,47 +103,29 @@ def test_joint_language_program_model(result, train_tasks, testing_tasks):
     attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, MAX_LENGTH, dropout_p=0.1).to(device)
 
     model = Seq2Seq(encoder1, attn_decoder1, MAX_LENGTH, pairs, input_lang, output_lang)
-    num_iters = 15000 #75000 # 75000 ~ 1.15 hrs
+    num_iters = 15000 # [75000 ~ 1.15 hrs]
     model.trainIters(num_iters, print_every=5000)
-    print("train: done")
+    print("Train: Done")
 
     # Evaluation
-    more = input("[positive int] >> ")
-    while more.isdigit():
-        model.evaluateRandomly(n=int(more))
+    print("\nEvaluating training set:")
+    model.evaluateSet(pairs)
+    print("\nEvaluating test set:")
+    model.evaluateSet(parse_tasks_into_pairs(result, testing_tasks))
+
+    print("Enter a positive integer to evaluate a random number of sentences or a sentence to evaluate.")
+    print("(Enter 'q' or 'quit' to quit.)")
+    more = input(">> ")
+    while more != "q" and more != "quit":
+        if more.isdigit():
+            model.evaluateRandomly(n=int(more))
+        else:
+            model.evaluate(more)
         more = input(">> ")
-    print("\ntest: done")
+    print("\nTest: Done")
 
     sys.exit(0)
 
-
-# 3/29/2021
-
-# TODO: 
-
-# debugging:
-# sample from model: what do the programs look like?
-# evaluation reconstruction loss: some other metric besides loss?
-# (other...)
-# some way to evaluate as an actual program 
-# visualization in some way during training/testing?
-
-# Big Qs
-# - command line flag for variants (such as +attention versus -attention)
-#     - stack of encoders + decoders, flag to toggle between modules to form model
-#     - different kinds of rnns
-# - keep track of hyperparams! (ess. hidden layer size / number of layers size)
-# 
-
-# DSL vs. word count
-#     - encoder:
-#         - init model w/ SOTA pretrained models for word embeddings
-#         - +/- finetuning (?) [i.e. start w/ hugging phase transformers, then pipe in english]
-#     - decoder:
-#         - probs won't work to use brackets
-#         - synthesis decoding literature for pointers here
-#         - attach encoder to current decoder (instead of seq2seq model)
-#             - (make sure loss isn't so bad) 
 
 # https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
 # -----------------------------------------------------------------------------
@@ -166,22 +161,39 @@ class Lang:
     
     def indexesFromSentence(self, sentence):
         return [self.word2index[word] for word in sentence.split(' ')]
+    
+    def tensorFromSentence(self, sentence):
+        indexes = self.indexesFromSentence(sentence)
+        indexes.append(EOS_token)
+        return torch.tensor(indexes, dtype=torch.long, device=device).view(-1, 1)
 
 class BERTLang:
     def __init__(self, name, tokenizer):
         self.name = name
         self.tokenizer = tokenizer
         self.max_sentence_length = 0 
+        self.n_words = 2  # Count SOS and EOS
+        self.bert_token_set = set()
+        self.word_set = set()
 
     def addSentence(self, sentence):
-        sent_length = len(sentence.split(' '))
-        if sent_length > self.max_sentence_length:
-            self.max_sentence_length = sent_length
+        indices = self.bert_encoding(sentence)
+        for token in indices:
+            self.bert_token_set.add(token)
+        self.n_words = len(self.bert_token_set)
+        if len(indices) > self.max_sentence_length:
+            print("new largest")
+            print(f'{sentence} - {len(sentence)}')
+            print(f'{indices} - {len(indices)}')
+        self.max_sentence_length = max(self.max_sentence_length, len(indices))
+
+    def bert_encoding(self, sentence):
+        return self.tokenizer.encode(sentence, add_special_tokens=False) #, return_tensors='pt')
     
-    def indexesFromSentence(self, sentence):
-        indexed_tokens = self.tokenizer.encode(tokenizer.encode(sentence, add_special_tokens=False))
-        print(f'BERT encoding of {sentence}: {indexed_tokens}')
-        return indexed_tokens
+    def tensorFromSentence(self, sentence):
+        indexes = self.bert_encoding(sentence)
+        # indexes.append(EOS_token)
+        return torch.tensor(indexes, dtype=torch.long, device=device).view(-1, 1)
         
 def normalizeString(s):
     s = s.lower().strip()
@@ -275,14 +287,9 @@ class Seq2Seq:
         self.teacher_forcing_ratio = 0.5
 
     # Helper Functions
-    def tensorFromSentence(self, lang, sentence):
-        indexes = lang.indexesFromSentence(sentence)
-        indexes.append(EOS_token)
-        return torch.tensor(indexes, dtype=torch.long, device=device).view(-1, 1)
-
     def tensorsFromPair(self, pair):
-        input_tensor = self.tensorFromSentence(self.input_lang, pair[0])
-        target_tensor = self.tensorFromSentence(self.output_lang, pair[1])
+        input_tensor = self.input_lang.tensorFromSentence(pair[0])
+        target_tensor = self.output_lang.tensorFromSentence(pair[1])
         return (input_tensor, target_tensor)
 
     def train(self, input_tensor, target_tensor, encoder_optimizer, decoder_optimizer, criterion):
@@ -336,7 +343,7 @@ class Seq2Seq:
 
     def evaluate(self, sentence):
         with torch.no_grad():
-            input_tensor = self.tensorFromSentence(self.input_lang, sentence)
+            input_tensor = self.input_lang.tensorFromSentence(sentence)
             input_length = input_tensor.size()[0]
             encoder_hidden = self.encoder.initHidden()
 
@@ -362,7 +369,7 @@ class Seq2Seq:
                     decoded_words.append('<EOS>')
                     break
                 else:
-                    decoded_words.append(output_lang.index2word[topi.item()])
+                    decoded_words.append(self.output_lang.index2word[topi.item()])
 
                 decoder_input = topi.squeeze().detach()
 
@@ -377,6 +384,17 @@ class Seq2Seq:
             output_sentence = ' '.join(output_words)
             print('<', output_sentence)
             print('')
+    
+    def evaluateSet(self, in_out_pairs, verbose=False):
+        total_correct = 0
+        for pair in in_out_pairs:
+            output_words, attentions = self.evaluate(pair[0])
+            output_sentence = ' '.join(output_words)
+            if verbose: print(f'> {pair[0]} --> {output_sentence} [{pair[1]}]')
+            if output_sentence == pair[1][0:-1]: # removes EOS tag
+                total_correct += 1
+        print(f'Total perfectly recovered: {total_correct}/{len(in_out_pairs)} ({1.0 * total_correct/len(in_out_pairs)})')
+
 
     def trainIters(self, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
         start = time.time()
