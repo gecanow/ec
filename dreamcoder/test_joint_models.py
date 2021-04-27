@@ -84,7 +84,9 @@ def prepare_data(in_out_pairs):
 
 
 # !!! MAIN ENTRY !!!
-# On command line: python3 bin/logo.py --enumerationTimeout 1 --testingTimeout 1 --iterations 12 --biasOptimal --contextual --taskBatchSize 40 --testEvery 1 --no-cuda --recognitionTimeout 1800 --recognition_0 --recognition_1 examples language --Helmholtz 0.5 --synchronous_grammar --skip_first_test --taskDataset logo_unlimited_200 --language_encoder recurrent --languageDataset logo_unlimited_200/human --sample_n_supervised 0 --moses_dir ./moses_compiled --smt_phrase_length 1 --language_compression --lc_score 0.2 --max_compression 5 --smt_pseudoalignments 0.0 --max_mem_per_enumeration_thread 5000000000 --seed 1 --test_joint_language_program_model       
+# On command line: 
+# python3 bin/logo.py --enumerationTimeout 1 --testingTimeout 1 --iterations 12 --biasOptimal --contextual --taskBatchSize 40 --testEvery 1 --no-cuda --recognitionTimeout 1800 --recognition_0 --recognition_1 examples language --Helmholtz 0.5 --synchronous_grammar --skip_first_test --taskDataset logo_unlimited_200 --language_encoder recurrent --languageDataset logo_unlimited_200/human --sample_n_supervised 0 --moses_dir ./moses_compiled --smt_phrase_length 1 --language_compression --lc_score 0.2 --max_compression 5 --smt_pseudoalignments 0.0 --max_mem_per_enumeration_thread 5000000000 --seed 1 --test_joint_language_program_model       
+# python3 bin/logo.py --enumerationTimeout 1 --testingTimeout 1 --iterations 12 --biasOptimal --contextual --taskBatchSize 40 --testEvery 1 --no-cuda --recognitionTimeout 1800 --recognition_0 --recognition_1 examples language --Helmholtz 0.5 --synchronous_grammar --skip_first_test --taskDataset logo_unlimited_200 --language_encoder recurrent --languageDataset logo_unlimited_200/synthetic --sample_n_supervised 0 --moses_dir ./moses_compiled --smt_phrase_length 1 --language_compression --lc_score 0.2 --max_compression 5 --smt_pseudoalignments 0.0 --max_mem_per_enumeration_thread 5000000000 --seed 1 --test_joint_language_program_model
 def test_joint_language_program_model(result, train_tasks, testing_tasks):
     # All tasks have a ground truth program and a name
     print(f'Length train tasks: {len(train_tasks)}')
@@ -382,7 +384,7 @@ class Seq2Seq:
             print('=', pair[1])
             output_words, attentions = self.evaluate(pair[0])
             output_sentence = ' '.join(output_words)
-            print('<', output_sentence)
+            print('< [model output]', output_sentence)
             print('')
     
     def evaluateSet(self, in_out_pairs, verbose=False):
